@@ -1,5 +1,16 @@
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY")
+)
+
 import streamlit as st
 import re
+import html
 from docx import Document
 
 # ---------------------------------------------------
@@ -21,11 +32,11 @@ st.write(
 # ---------------------------------------------------
 
 chapter = st.text_input(
-    "Chapter# (in two digits)"
+    "Chapter #"
 )
 
 quiz = st.text_input(
-    "Quiz# (in two digits)"
+    "Quiz #"
 )
 
 uploaded_file = st.file_uploader(
@@ -63,111 +74,81 @@ def read_uploaded_file(uploaded_file):
 
 def normalize_quiz(text):
 
-    lines = text.split("\n")
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+You are a strict Moodle Aiken quiz formatting engine.
 
-    cleaned_lines = []
+You are NOT a chatbot.
 
-    option_letters = ["A", "B", "C", "D", "E", "F"]
+You ONLY output strict Moodle-compatible Aiken quiz text.
 
-    option_counter = 0
+STRICT OUTPUT RULES:
 
-    for line in lines:
+1. Each question stem must appear on its own line.
+2. Each option must appear on a SEPARATE new line.
+3. Each option must start exactly with:
+A.
+B.
+C.
+D.
+followed by a space.
+4. The answer line must appear immediately after options.
+5. Correct answer format must be EXACTLY:
+ANSWER: X
+6. Insert exactly ONE blank line between separate questions.
+7. Remove all question numbering.
+8. Professionally capitalize ONLY question stems.
+9. Preserve option text EXACTLY as written by the teacher.
+10. Never rewrite, re-capitalize, paraphrase, or grammatically alter option text.
+11. Preserve abbreviations like APA, SPSS, AI, LMS.
+12. Do NOT add explanations.
+13. Do NOT add markdown.
+14. Do NOT add bullets.
+15. Do NOT add examples.
+16. Do NOT add notes.
+17. Do NOT rewrite meanings.
+18. Output ONLY the formatted quiz text.
 
-        line = line.strip()
+CORRECT FORMAT EXAMPLE:
 
-        # Skip empty lines
-        if not line:
-            continue
+What is the capital of France?
+A. London
+B. Berlin
+C. Paris
+D. Madrid
+ANSWER: C
+"""
+            },
+            {
+                "role": "user",
+                "content": text
+            }
+        ],
+        temperature=0
+    )
 
-        # -----------------------------------------
-        # REMOVE QUESTION NUMBERING
-        # Example:
-        # 1)
-        # 1.
-        # Q1.
-        # -----------------------------------------
+    formatted_text = response.choices[0].message.content
+    
+    formatted_text = html.unescape(formatted_text)
 
-        line = re.sub(
-            r'^(Q\s*)?\d+[\)\.\:]?\s*',
-            '',
-            line,
-            flags=re.IGNORECASE
-        )
+    # Remove markdown double spaces
+    formatted_text = formatted_text.replace("  \n", "\n")
 
-        # -----------------------------------------
-        # NORMALIZE ANSWER LINE
-        # -----------------------------------------
+    # Remove excessive blank lines
+    formatted_text = re.sub(
+        r'\n{3,}',
+        '\n\n',
+        formatted_text
+    )
 
-        if re.match(r'(?i)^answer', line):
+    # Trim whitespace
+    formatted_text = formatted_text.strip()
 
-            answer = re.sub(
-                r'(?i)^answer\s*[:=\-]?\s*',
-                '',
-                line
-            ).strip()
-
-            answer = answer.upper()
-
-            # Convert numeric answer to letter
-            if answer.isdigit():
-
-                num = int(answer)
-
-                if 1 <= num <= 6:
-
-                    answer = option_letters[num - 1]
-
-            cleaned_lines.append(f"ANSWER: {answer}")
-
-            cleaned_lines.append("")
-
-            option_counter = 0
-
-            continue
-
-        # -----------------------------------------
-        # DETECT OPTIONS
-        # Supports:
-        # a)
-        # a.
-        # A)
-        # 1)
-        # etc.
-        # -----------------------------------------
-
-        option_match = re.match(
-            r'^([a-fA-F1-6])[\)\.\:]?\s*(.*)',
-            line
-        )
-
-        if option_match:
-
-            option_text = option_match.group(2).strip()
-
-            letter = option_letters[option_counter]
-
-            cleaned_lines.append(
-                f"{letter}. {option_text}"
-            )
-
-            option_counter += 1
-
-            continue
-
-        # -----------------------------------------
-        # TREAT AS QUESTION
-        # -----------------------------------------
-
-        option_counter = 0
-
-        # Capitalize first letter
-        if line:
-
-            line = line[0].upper() + line[1:]
-
-        cleaned_lines.append(line)
-
-    return "\n".join(cleaned_lines)
+    return formatted_text
 
 # ---------------------------------------------------
 # VALIDATION ENGINE
